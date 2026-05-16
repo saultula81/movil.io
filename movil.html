@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KSM AirControl - Móvil Exteriores</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        body {
+            background: #0b0b12;
+            color: white;
+            font-family: sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            text-align: center;
+        }
+        .container {
+            background: #16161e;
+            padding: 2rem;
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            width: 90%;
+            max-width: 400px;
+        }
+        h1 { color: #ff2a2a; margin-bottom: 0.5rem; }
+        p { color: #94a3b8; font-size: 0.9rem; }
+        input {
+            width: 100%;
+            padding: 12px;
+            margin: 1rem 0;
+            background: #0b0b12;
+            border: 1px solid #262633;
+            color: white;
+            border-radius: 8px;
+            text-align: center;
+            box-sizing: border-box;
+        }
+        button {
+            width: 100%;
+            padding: 15px;
+            background: #10b981;
+            border: none;
+            color: white;
+            font-weight: bold;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1.1rem;
+            transition: transform 0.2s;
+        }
+        button:active { transform: scale(0.95); }
+        button.active { background: #ff2a2a; }
+        .status { margin-top: 1.5rem; font-weight: bold; }
+        .status.online { color: #10b981; }
+        .vumeter {
+            width: 100%;
+            height: 10px;
+            background: #0b0b12;
+            margin-top: 10px;
+            border-radius: 5px;
+            overflow: hidden;
+            display: none;
+        }
+        .vumeter-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #10b981, #f59e0b, #ff2a2a);
+            width: 0%;
+            transition: width 0.1s;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>MÓVIL EN VIVO</h1>
+        <p>KSM AirControl Remote Link</p>
+        
+        <input type="text" id="stationId" placeholder="ID de Estación" value="ksm-studio-01">
+        
+        <button id="btnAction">CONECTAR AL AIRE</button>
+        
+        <div id="vumeter" class="vumeter">
+            <div id="vumeterBar" class="vumeter-bar"></div>
+        </div>
+        
+        <div id="status" class="status">Desconectado</div>
+    </div>
+
+    <script>
+        const SUPABASE_URL = 'https://fweswlbnnodinyqbtfpn.supabase.co';
+        const SUPABASE_KEY = 'sb_publishable_W4v-Gno1gsWCFxNIQqcIOQ_IhCAUZ3c';
+        
+        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        let peerConnection = null;
+        let localStream = null;
+        let channel = null;
+
+        const btn = document.getElementById('btnAction');
+        const statusDiv = document.getElementById('status');
+        const vumeter = document.getElementById('vumeter');
+        const vumeterBar = document.getElementById('vumeterBar');
+
+        btn.onclick = async () => {
+            if (localStream) {
+                location.reload(); // Forma simple de desconectar
+                return;
+            }
+
+            const stationId = document.getElementById('stationId').value;
+            statusDiv.innerText = "Solicitando micrófono...";
+            
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                statusDiv.innerText = "Conectando con Supabase...";
+                
+                // VU Meter
+                const audioContext = new AudioContext();
+                const source = audioContext.createMediaStreamSource(localStream);
+                const analyzer = audioContext.createAnalyser();
+                source.connect(analyzer);
+                const dataArray = new Uint8Array(analyzer.frequencyBinCount);
+                
+                vumeter.style.display = "block";
+                function updateVU() {
+                    analyzer.getByteFrequencyData(dataArray);
+                    let sum = 0;
+                    for(let i=0; i<dataArray.length; i++) sum += dataArray[i];
+                    let average = sum / dataArray.length;
+                    vumeterBar.style.width = Math.min(100, average * 2) + "%";
+                    if (localStream) requestAnimationFrame(updateVU);
+                }
+                updateVU();
+
+                // WebRTC
+                const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+                peerConnection = new RTCPeerConnection(config);
+                
+                localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+                channel = supabaseClient.channel(`signaling:${stationId}`);
+
+                peerConnection.onicecandidate = (event) => {
+                    if (event.candidate) {
+                        channel.send({ type: 'broadcast', event: 'ice-candidate', payload: { candidate: event.candidate } });
+                    }
+                };
+
+                channel.on('broadcast', { event: 'answer' }, async ({ payload }) => {
+                    await peerConnection.setRemoteDescription(new RTCSessionDescription(payload.sdp));
+                    statusDiv.innerText = "¡EN VIVO!";
+                    statusDiv.className = "status online";
+                    btn.innerText = "COLGAR";
+                    btn.className = "active";
+                });
+
+                channel.on('broadcast', { event: 'ice-candidate' }, async ({ payload }) => {
+                    if (payload.candidate) await peerConnection.addIceCandidate(new RTCIceCandidate(payload.candidate));
+                });
+
+                channel.subscribe(async (status) => {
+                    if (status === 'SUBSCRIBED') {
+                        const offer = await peerConnection.createOffer();
+                        await peerConnection.setLocalDescription(offer);
+                        channel.send({ type: 'broadcast', event: 'offer', payload: { sdp: offer } });
+                    }
+                });
+
+            } catch (err) {
+                alert("Error: " + err.message);
+                statusDiv.innerText = "Error de conexión";
+            }
+        };
+    </script>
+</body>
+</html>
