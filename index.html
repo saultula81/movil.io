@@ -77,7 +77,7 @@
         <h1>MÓVIL EN VIVO</h1>
         <p>KSM AirControl Remote Link</p>
         
-        <input type="text" id="stationId" placeholder="ID de Estación" value="ksm-studio-01">
+        <input type="text" id="stationId" placeholder="ID de Estación">
         
         <button id="btnAction">CONECTAR AL AIRE</button>
         
@@ -89,8 +89,9 @@
     </div>
 
     <script>
-        const SUPABASE_URL = 'https://fweswlbnnodinyqbtfpn.supabase.co';
-        const SUPABASE_KEY = 'sb_publishable_W4v-Gno1gsWCFxNIQqcIOQ_IhCAUZ3c';
+        // Nuevas credenciales de Supabase
+        const SUPABASE_URL = 'https://xfbzaslkmtyrdqrdmhyh.supabase.co';
+        const SUPABASE_KEY = 'sb_publishable_9tXWlF8tRwnJw3RVUCP71w_5cgn11YV';
         
         const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         let peerConnection = null;
@@ -101,6 +102,22 @@
         const statusDiv = document.getElementById('status');
         const vumeter = document.getElementById('vumeter');
         const vumeterBar = document.getElementById('vumeterBar');
+        const stationInput = document.getElementById('stationId');
+
+        // Extraer ID y Nombre de Estación desde la URL (del Código QR)
+        const urlParams = new URLSearchParams(window.location.search);
+        const urlStation = urlParams.get('station');
+        const urlName = urlParams.get('name');
+        
+        if (urlStation) {
+            stationInput.value = urlStation;
+            // Ocultar input para que quede más limpio
+            stationInput.style.display = 'none'; 
+        }
+        
+        if (urlName) {
+            document.querySelector('p').innerText = 'Conectando a: ' + urlName;
+        }
 
         btn.onclick = async () => {
             if (localStream) {
